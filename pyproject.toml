@@ -1,0 +1,10 @@
+# Конфиг ruff для линтера скилла. Сам скилл зависимостей не требует;
+# ruff нужен только разработке. Запуск: uvx ruff check . / uvx ruff format .
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+
+[tool.ruff.lint]
+# SIM103: три параллельных `if ...: return False` в keep() оставлены намеренно —
+# единообразие фильтров читается лучше, чем `return not (...)` с двойным отрицанием.
+ignore = ["SIM103"]
