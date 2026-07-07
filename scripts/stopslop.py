@@ -41,15 +41,30 @@ def load_markers(path: Path) -> list[dict]:
     cur: dict | None = None
     in_bad = False
 
+    escapes = {'"': '"', "\\": "\\", "n": "\n", "t": "\t"}
+
     def unquote(v: str) -> str:
         v = v.strip()
         if len(v) >= 2 and v[0] == v[-1] and v[0] == '"':
-            # двойные кавычки YAML: декодируем escape-последовательности
-            v = v[1:-1]
-            v = v.replace('\\"', '"').replace("\\n", "\n").replace("\\\\", "\\")
-        elif len(v) >= 2 and v[0] == v[-1] and v[0] == "'":
+            # двойные кавычки YAML: escape-последовательности декодируются
+            # одним проходом слева направо; цепочка .replace() разобрала бы
+            # "\\n" как бэкслеш с переводом строки
+            body = v[1:-1]
+            out: list[str] = []
+            i = 0
+            while i < len(body):
+                ch = body[i]
+                if ch == "\\" and i + 1 < len(body):
+                    nxt = body[i + 1]
+                    out.append(escapes.get(nxt, "\\" + nxt))
+                    i += 2
+                else:
+                    out.append(ch)
+                    i += 1
+            return "".join(out)
+        if len(v) >= 2 and v[0] == v[-1] and v[0] == "'":
             # одинарные кавычки YAML: только '' -> ', без escape
-            v = v[1:-1].replace("''", "'")
+            return v[1:-1].replace("''", "'")
         return v
 
     for raw in text.splitlines():
@@ -83,11 +98,19 @@ def load_markers(path: Path) -> list[dict]:
     return markers
 
 
+RE_FLAGS = {"i": re.IGNORECASE, "m": re.MULTILINE, "s": re.DOTALL, "x": re.VERBOSE}
+
+
 def compile_marker(m: dict):
     pat = m.get("regex", "") or ""
     if not pat:
         return None
-    flags = re.IGNORECASE | re.MULTILINE
+    flags = 0
+    for ch in m.get("flags") or "im":
+        if ch in RE_FLAGS:
+            flags |= RE_FLAGS[ch]
+        elif ch.strip():
+            sys.stderr.write(f"warn: неизвестный флаг {ch!r} у маркера {m['id']}\n")
     try:
         return re.compile(pat, flags)
     except re.error as exc:
@@ -134,17 +157,23 @@ def main() -> int:
     ap.add_argument(
         "--min-score",
         type=int,
-        default=0,
-        help="вернуть код 1, если найдено больше N срабатываний",
+        default=None,
+        help="вернуть код 1, если найдено больше N срабатываний (0 — при любом)",
     )
     args = ap.parse_args()
 
-    markers = load_markers(MARKERS_FILE)
+    try:
+        markers = load_markers(MARKERS_FILE)
+    except OSError as exc:
+        sys.stderr.write(f"ошибка: не смог прочитать {MARKERS_FILE}: {exc}\n")
+        return 2
 
     if args.list:
         for m in markers:
+            tail = "" if m.get("regex") else "  [без regex]"
             print(
-                f"{m['severity']:<6} {m['category']:<11} {m['id']:<22} {m.get('title', '')}"
+                f"{m['severity']:<6} {m['category']:<11} {m['id']:<22} "
+                f"{m.get('title', '')}{tail}"
             )
         return 0
 
@@ -154,12 +183,12 @@ def main() -> int:
         )
 
     sev_filter = (
-        set(s.strip() for s in args.severity.split(",")) if args.severity else None
+        {s.strip() for s in args.severity.split(",")} if args.severity else None
     )
     cat_filter = (
-        set(c.strip() for c in args.category.split(",")) if args.category else None
+        {c.strip() for c in args.category.split(",")} if args.category else None
     )
-    id_filter = set(i.strip() for i in args.ids.split(",")) if args.ids else None
+    id_filter = {i.strip() for i in args.ids.split(",")} if args.ids else None
 
     def keep(m: dict) -> bool:
         if sev_filter and m.get("severity") not in sev_filter:
@@ -175,11 +204,14 @@ def main() -> int:
     if args.file == "-":
         text = sys.stdin.read()
     else:
-        path = Path(args.file)
-        if not path.is_file():
+        try:
+            text = Path(args.file).read_text(encoding="utf-8")
+        except FileNotFoundError:
             sys.stderr.write(f"ошибка: файл не найден — {args.file}\n")
             return 2
-        text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            sys.stderr.write(f"ошибка: не смог прочитать {args.file}: {exc}\n")
+            return 2
 
     hits: list[tuple] = []
     for m in active:
@@ -237,7 +269,7 @@ def main() -> int:
     )
     print(f"Итого срабатываний: {len(hits)} ({summary}).")
 
-    if args.min_score and len(hits) > args.min_score:
+    if args.min_score is not None and len(hits) > args.min_score:
         return 1
     return 0
 
