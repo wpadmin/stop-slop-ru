@@ -35,15 +35,16 @@ python3 scripts/stopslop.py --list                         # список все
 ## Что внутри
 
 - `SKILL.md` — правила, быстрые проверки, шкала оценки.
-- `markers.yaml` — все маркеры в одном файле (сейчас 41). Отсюда их берёт и человек, и линтер.
+- `markers.yaml` — все маркеры в одном файле (сейчас 45). Отсюда их берёт и человек, и линтер.
 - `scripts/stopslop.py` — линтер.
 - `scripts/selftest.py` — самопроверка корпуса: каждый regex ловит свои примеры и молчит на чистом тексте.
 - `references/` — словарь фраз, разбор структур, примеры «было / стало».
 - `CONTRIBUTING.md` — как добавить новый маркер.
+- `CHANGELOG.md` — версии корпуса и история маркеров.
 
 ## Откуда взялось
 
-Идею, структуру и шкалу оценки я взял из [stop-slop](https://github.com/hardikpandya/stop-slop) — спасибо автору. Русские маркеры собрал из разборов ИИ-текста 2025–2026: статьи на Habr и vc.ru, материалы «Грамоты».
+Идею, структуру и шкалу оценки я взял из [stop-slop](https://github.com/hardikpandya/stop-slop) — спасибо автору. Русские маркеры собрал из разборов ИИ-текста 2025–2026: статьи на Habr и vc.ru, материалы «Грамоты», разбор [«Мела»](https://mel.fm/gramotnost/gramotny-otvet/7352084-eto-ne-prosto-oborot-eto-izdevatelstvo-5-otvratitelnykh-oshibok-kotoryye-vydayut-ii-v-tekste) о синтаксических кальках.
 
 ## Лицензия
 
