@@ -20,7 +20,13 @@ from __future__ import annotations
 
 import re
 
-from stopslop import MARKERS_FILE, compile_marker, load_markers
+from stopslop import (
+    MARKERS_FILE,
+    compile_marker,
+    density_hit,
+    load_markers,
+    section_template_flag,
+)
 
 CATEGORIES = {"phrases", "structures", "punctuation", "formatting", "morphology"}
 SEVERITIES = {"high", "medium", "low"}
@@ -75,7 +81,34 @@ CLEAN_TEXT = """\
 У меня для тебя отличная новость: мы едем в отпуск!
 Я люблю, когда ты меня обнимаешь.
 Когда тебя предают, это больно.
+Пер. Ф. Э. Роббинса, Loeb Classical Library, 1940.
+К. Г. Юнг. Синхронистичность, 1952.
+Похоже, дождь зарядил до вечера.
+Метод простой, но работает только при точном времени рождения.
 """
+
+# section-template: одни и те же разделы с колодкой и без неё
+_FACT = (
+    "В 1840 году обсерватория в Пулкове получила рефрактор с объективом "
+    "в пятнадцать дюймов, и наблюдения двойных звёзд пошли вдвое быстрее."
+)
+TEMPLATED_SECTIONS = "".join(
+    f"## Раздел {i}\n\n{_FACT} {_FACT}\n\n"
+    "Сегодня этот инструмент считают устаревшим, но каталог двойных звёзд "
+    "из Пулкова цитируют до сих пор.\n\n"
+    "Подробнее о каталоге — на странице обсерватории.\n\n"
+    for i in range(4)
+)
+LIVE_SECTIONS = "".join(
+    f"## Раздел {i}\n\n{_FACT} {_FACT} {_FACT}\n\n"
+    "Заказ на объектив ушёл в Мюнхен, в мастерскую Мерца и Малера, "
+    "и стекло шлифовали почти два года.\n\n"
+    for i in range(4)
+)
+HEDGE_SERIES = (
+    "Похоже, так и было. Насколько нам известно, это не проверяли. "
+    "Кто автор, мы так и не нашли."
+)
 
 # пояснение в скобках в конце bad-примера — комментарий, не часть фразы
 ANNOTATION = re.compile(r"\s*\([^()]*\)$")
@@ -137,13 +170,30 @@ def check_coverage(markers: list[dict], compiled: dict) -> list[str]:
     return fails
 
 
-def check_clean(compiled: dict) -> list[str]:
+def check_clean(compiled: dict, by_id: dict) -> list[str]:
     fails: list[str] = []
     for mid, rx in sorted(compiled.items()):
+        if by_id[mid].get("density"):
+            if density_hit(by_id[mid], rx, CLEAN_TEXT):
+                fails.append(f"чистый текст: {mid} ложно сработал как серия")
+            continue
         mo = rx.search(CLEAN_TEXT)
         if mo:
             frag = mo.group(0).strip().replace("\n", " ")
             fails.append(f"чистый текст: {mid} ложно сработал: «{frag[:60]}»")
+    return fails
+
+
+def check_heuristics(compiled: dict, by_id: dict) -> list[str]:
+    fails: list[str] = []
+    lexicons = [compiled[i] for i in ("epistemic-hedging", "clever-hinge") if i in compiled]
+    if not section_template_flag(TEMPLATED_SECTIONS, lexicons):
+        fails.append("эвристика: section-template не видит колодку разделов")
+    if section_template_flag(LIVE_SECTIONS, lexicons):
+        fails.append("эвристика: section-template сработал на разделах без колодки")
+    hedging = by_id.get("epistemic-hedging")
+    if hedging and not density_hit(hedging, compiled["epistemic-hedging"], HEDGE_SERIES):
+        fails.append("эвристика: epistemic-hedging не видит серию из трёх оговорок")
     return fails
 
 
@@ -165,8 +215,10 @@ def main() -> int:
         else:
             compiled[m["id"]] = rx
 
+    by_id = {m["id"]: m for m in markers}
     fails += check_coverage(markers, compiled)
-    fails += check_clean(compiled)
+    fails += check_clean(compiled, by_id)
+    fails += check_heuristics(compiled, by_id)
 
     print(
         f"Маркеров: {len(markers)}, с regex: {len(compiled)}, "
