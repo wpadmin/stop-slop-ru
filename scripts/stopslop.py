@@ -28,7 +28,7 @@ MARKERS_FILE = Path(__file__).resolve().parent.parent / "markers.yaml"
 SEVERITY_ORDER = {"high": 3, "medium": 2, "low": 1}
 
 # маркеры без regex, которые считает код этого файла
-HEURISTICS = {"flat-rhythm", "section-template"}
+HEURISTICS = {"flat-rhythm", "section-template", "uniform-shape"}
 
 
 def load_markers(path: Path) -> list[dict]:
@@ -263,6 +263,42 @@ def section_template_flag(text: str, lexicons: list) -> dict | None:
     }
 
 
+# uniform-shape; калибровка порогов — в CHANGELOG
+UNIFORM_MIN_SECTIONS = 4
+UNIFORM_MIN_PARAS = 3
+UNIFORM_MIN_MEAN_WORDS = 150  # короткие параллельные карточки ровны по жанру
+UNIFORM_LENGTH_CV = 0.10
+UNIFORM_PARAS_SHARE = 0.75
+
+
+def uniform_shape_flag(text: str) -> dict | None:
+    """Разделы одного размера и с одним числом абзацев: серия по одной мерке."""
+    sections = body_sections(text)
+    if len(sections) < UNIFORM_MIN_SECTIONS:
+        return None
+    sizes = [sum(word_count(p) for p in paras) for _, _, paras in sections]
+    counts = [len(paras) for _, _, paras in sections]
+    mean = sum(sizes) / len(sizes)
+    cv = (sum((x - mean) ** 2 for x in sizes) / len(sizes)) ** 0.5 / mean
+    top = max(set(counts), key=counts.count)
+    share = counts.count(top) / len(counts)
+    if (
+        mean < UNIFORM_MIN_MEAN_WORDS
+        or top < UNIFORM_MIN_PARAS
+        or cv >= UNIFORM_LENGTH_CV
+        or share < UNIFORM_PARAS_SHARE
+    ):
+        return None
+    return {
+        "line": sections[0][0],
+        "detail": (
+            f"{len(sections)} разделов одного размера: {min(sizes)}–{max(sizes)} слов "
+            f"(CV={cv:.2f}, порог {UNIFORM_LENGTH_CV}), по {top} абзацев в "
+            f"{counts.count(top)} из {len(counts)}"
+        ),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Линтер AI-маркеров русской прозы (stop-slop-ru)."
@@ -392,6 +428,9 @@ def main() -> int:
             compiled[i] for i in ("epistemic-hedging", "clever-hinge") if i in compiled
         ]
         add_summary(by_id["section-template"], section_template_flag(text, lexicons))
+
+    if "uniform-shape" in by_id and keep(by_id["uniform-shape"]):
+        add_summary(by_id["uniform-shape"], uniform_shape_flag(text))
 
     hits.sort(key=lambda h: (-SEVERITY_ORDER.get(h[0], 0), h[4]))
 

@@ -26,6 +26,7 @@ from stopslop import (
     density_hit,
     load_markers,
     section_template_flag,
+    uniform_shape_flag,
 )
 
 CATEGORIES = {"phrases", "structures", "punctuation", "formatting", "morphology"}
@@ -89,6 +90,9 @@ CLEAN_TEXT = """\
 Он старался произвести впечатление, но переиграл.
 Многовековая рыболовная и аграрная традиция выделяет водные знаки.
 Пищевая промышленность и добывающая отрасль дали половину роста.
+Связь практичная и заботливая, но требующая терпения к придиркам.
+Красивая, выразительная шея и покатые плечи.
+Дайте ему работу, в которой нужно понимать людей.
 Метод простой, но работает только при точном времени рождения.
 """
 
@@ -109,6 +113,15 @@ LIVE_SECTIONS = "".join(
     "Заказ на объектив ушёл в Мюнхен, в мастерскую Мерца и Малера, "
     "и стекло шлифовали почти два года.\n\n"
     for i in range(4)
+)
+# uniform-shape: пакет страниц одной мерки и тот же пакет с объёмом от материала
+_PAGE_PAR = " ".join([_FACT] * 3)
+UNIFORM_PAGES = "".join(
+    f"## Страница {i}\n\n" + "\n\n".join([_PAGE_PAR] * 3) + "\n\n" for i in range(5)
+)
+VARIED_PAGES = "".join(
+    f"## Страница {i}\n\n" + "\n\n".join([_PAGE_PAR] * n) + "\n\n"
+    for i, n in enumerate((2, 5, 3, 7, 4))
 )
 HEDGE_SERIES = (
     "Похоже, так и было. Насколько нам известно, это не проверяли. "
@@ -196,6 +209,10 @@ def check_heuristics(compiled: dict, by_id: dict) -> list[str]:
         fails.append("эвристика: section-template не видит колодку разделов")
     if section_template_flag(LIVE_SECTIONS, lexicons):
         fails.append("эвристика: section-template сработал на разделах без колодки")
+    if not uniform_shape_flag(UNIFORM_PAGES):
+        fails.append("эвристика: uniform-shape не видит страницы одной мерки")
+    if uniform_shape_flag(VARIED_PAGES):
+        fails.append("эвристика: uniform-shape сработал на страницах разного объёма")
     hedging = by_id.get("epistemic-hedging")
     if hedging and not density_hit(hedging, compiled["epistemic-hedging"], HEDGE_SERIES):
         fails.append("эвристика: epistemic-hedging не видит серию из трёх оговорок")
