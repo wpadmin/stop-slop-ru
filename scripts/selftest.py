@@ -25,7 +25,9 @@ from stopslop import (
     compile_marker,
     density_hit,
     load_markers,
+    same_opener_flag,
     section_template_flag,
+    series_crutch_flag,
     uniform_shape_flag,
 )
 
@@ -94,6 +96,8 @@ CLEAN_TEXT = """\
 Красивая, выразительная шея и покатые плечи.
 Дайте ему работу, в которой нужно понимать людей.
 Метод простой, но работает только при точном времени рождения.
+Он заказал чай, а не кофе, и сел у окна.
+Сноска [1] ведёт на сайт обсерватории, поворот руля даёт занос.
 """
 
 # section-template: одни и те же разделы с колодкой и без неё
@@ -123,6 +127,29 @@ VARIED_PAGES = "".join(
     f"## Страница {i}\n\n" + "\n\n".join([_PAGE_PAR] * n) + "\n\n"
     for i, n in enumerate((2, 5, 3, 7, 4))
 )
+# same-opener, series-crutch: карточки с общим зачином и оборотом, формула и вразнобой
+_CARD_TAILS = (
+    "Планы меняются на ходу, и новостей больше обычного.",
+    "Хочется закрыть дверь и разобрать шкафы.",
+    "Отчёт и экзамен идут легче, чем отдых.",
+    "Друзья зовут в гости, график трещит.",
+    "Сроки и цифры лучше проверить дважды.",
+    "Переговоры идут легко, решать в одиночку трудно.",
+)
+_OPENERS = ("Темп падает.", "Тянет домой.", "Границы размыты.", "Всё решают люди.")
+
+
+def _cards(openers: list[str]) -> str:
+    return "".join(
+        f"## Карточка {i}\n\n{opener} {_CARD_TAILS[i % len(_CARD_TAILS)]}\n\n"
+        for i, opener in enumerate(openers)
+    )
+
+
+OPENER_SERIES = _cards(["Месяц просит порядка."] * 5 + list(_OPENERS))
+FORMULA_SERIES = _cards(["Луна в этом доме."] * 9)
+MIXED_SERIES = _cards(list(_OPENERS) * 2)
+CRUTCH_SERIES = _cards([f"{o} Такой человек молчит." for o in _OPENERS] + list(_OPENERS))
 HEDGE_SERIES = (
     "Похоже, так и было. Насколько нам известно, это не проверяли. "
     "Кто автор, мы так и не нашли."
@@ -213,6 +240,15 @@ def check_heuristics(compiled: dict, by_id: dict) -> list[str]:
         fails.append("эвристика: uniform-shape не видит страницы одной мерки")
     if uniform_shape_flag(VARIED_PAGES):
         fails.append("эвристика: uniform-shape сработал на страницах разного объёма")
+    if not same_opener_flag(OPENER_SERIES):
+        fails.append("эвристика: same-opener не видит серию с одним зачином")
+    for name, pack in (("формуле", FORMULA_SERIES), ("разных зачинах", MIXED_SERIES)):
+        if same_opener_flag(pack):
+            fails.append(f"эвристика: same-opener сработал на {name}")
+    if not series_crutch_flag(CRUTCH_SERIES):
+        fails.append("эвристика: series-crutch не видит оборот в половине карточек")
+    if series_crutch_flag(MIXED_SERIES):
+        fails.append("эвристика: series-crutch сработал на карточках без повтора")
     hedging = by_id.get("epistemic-hedging")
     if hedging and not density_hit(hedging, compiled["epistemic-hedging"], HEDGE_SERIES):
         fails.append("эвристика: epistemic-hedging не видит серию из трёх оговорок")

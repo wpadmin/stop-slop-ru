@@ -28,7 +28,13 @@ MARKERS_FILE = Path(__file__).resolve().parent.parent / "markers.yaml"
 SEVERITY_ORDER = {"high": 3, "medium": 2, "low": 1}
 
 # маркеры без regex, которые считает код этого файла
-HEURISTICS = {"flat-rhythm", "section-template", "uniform-shape"}
+HEURISTICS = {
+    "flat-rhythm",
+    "section-template",
+    "uniform-shape",
+    "same-opener",
+    "series-crutch",
+}
 
 
 def load_markers(path: Path) -> list[dict]:
@@ -299,6 +305,96 @@ def uniform_shape_flag(text: str) -> dict | None:
     }
 
 
+# same-opener, series-crutch; калибровка порогов — в CHANGELOG
+SERIES_MIN_CARDS = 6
+SERIES_MIN_WORDS = 8
+SERIES_MIN_HITS = 4
+SERIES_SHARE = 1 / 3
+SERIES_FORMULA_SHARE = 0.9  # выше — намеренная формула, а не почерк
+FUNCTION_WORDS = {
+    "что", "как", "это", "для", "или", "при", "под", "над", "без", "его", "она", "они",
+    "оно", "вас", "вам", "нас", "нам", "тот", "эта", "эти", "там", "тут", "где",
+    "когда", "если", "чем", "уже", "ещё", "все", "всё", "был", "была", "было", "были",
+    "есть", "может", "будет", "себя", "свой", "свою", "своё", "свои", "который",
+    "которая", "которые",
+}
+
+
+def series_cards(text: str) -> list[tuple[int, list[str]]]:
+    heads = list(HEADING.finditer(text))
+    out = []
+    for i, h in enumerate(heads):
+        title = h.group(1).strip()
+        if SECTION_SKIP.match(title) or title.endswith("?"):
+            continue
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        words = [w.lower() for w in WORD.findall(text[h.end() : end])]
+        if len(words) >= SERIES_MIN_WORDS:
+            out.append((line_of(text, h.start()), words))
+    return out
+
+
+def series_share(cards: list, keys_of) -> tuple[str, list[int]] | None:
+    """Самый частый ключ серии и строки карточек, где он встречается."""
+    if len(cards) < SERIES_MIN_CARDS:
+        return None
+    where: dict[str, list[int]] = {}
+    for line, words in cards:
+        for key in keys_of(words):
+            where.setdefault(key, []).append(line)
+    if not where:
+        return None
+    key, lines = max(where.items(), key=lambda kv: len(kv[1]))
+    share = len(lines) / len(cards)
+    if len(lines) < SERIES_MIN_HITS or not SERIES_SHARE <= share < SERIES_FORMULA_SHARE:
+        return None
+    return key, lines
+
+
+def same_opener_flag(text: str) -> dict | None:
+    cards = series_cards(text)
+    found = series_share(
+        cards, lambda w: {w[0] if len(w[0]) >= 4 else " ".join(w[:2])}
+    )
+    if not found:
+        return None
+    key, lines = found
+    return {
+        "line": lines[0],
+        "detail": (
+            f"{len(lines)} из {len(cards)} карточек начинаются с «{key}», "
+            f"строки {', '.join(map(str, lines))}"
+        ),
+    }
+
+
+def series_crutch_flag(text: str) -> dict | None:
+    cards = series_cards(text)
+
+    def pairs(words: list[str]) -> set[str]:
+        return {
+            f"{a} {b}"
+            for a, b in zip(words, words[1:])
+            if a != b
+            and len(a) >= 3
+            and len(b) >= 3
+            and a not in FUNCTION_WORDS
+            and b not in FUNCTION_WORDS
+        }
+
+    found = series_share(cards, pairs)
+    if not found:
+        return None
+    key, lines = found
+    return {
+        "line": lines[0],
+        "detail": (
+            f"«{key}» в {len(lines)} из {len(cards)} карточек, "
+            f"строки {', '.join(map(str, lines))}"
+        ),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Линтер AI-маркеров русской прозы (stop-slop-ru)."
@@ -429,8 +525,13 @@ def main() -> int:
         ]
         add_summary(by_id["section-template"], section_template_flag(text, lexicons))
 
-    if "uniform-shape" in by_id and keep(by_id["uniform-shape"]):
-        add_summary(by_id["uniform-shape"], uniform_shape_flag(text))
+    for mid, flag in (
+        ("uniform-shape", uniform_shape_flag),
+        ("same-opener", same_opener_flag),
+        ("series-crutch", series_crutch_flag),
+    ):
+        if mid in by_id and keep(by_id[mid]):
+            add_summary(by_id[mid], flag(text))
 
     hits.sort(key=lambda h: (-SEVERITY_ORDER.get(h[0], 0), h[4]))
 
